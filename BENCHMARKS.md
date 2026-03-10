@@ -199,7 +199,7 @@ All tests conducted on real hardware by the project creator.
 | Slowest frame | 5.71s | 4.89s | **3.61s** | **-36.8%** |
 | Total time (22 frames) | ~125.6s | 82.8s | **43.0s** | **-82.6s saved** |
 | Full renders | 22 | 22 | **11** | |
-| Skipped frames | 0 | 0 | **11 ⚡ (50%)** | |
+| Skipped frames | 0 | 0 | **11 (50%)** | |
 
 **Full progression table:**
 
@@ -240,7 +240,7 @@ All tests conducted on real hardware by the project creator.
 | Slowest frame | 5.71s | 3.61s | **3.57s** | **-37.5%** |
 | Total time (22 frames) | ~125.6s | 43.0s | **42.9s** | **-82.7s saved** |
 | Full renders | 22 | 11 | **11** | |
-| Skipped frames | 0 | 11 ⚡ | **11 ⚡ (50%)** | |
+| Skipped frames | 0 | 11 | **11 (50%)** | |
 
 **Full frame breakdown (full renders only):**
 
@@ -281,11 +281,11 @@ All tests conducted on real hardware by the project creator.
 | Metric | Value |
 |---|---|
 | Average frame time | 2.02s |
-| Fastest frame | 0.00s ⚡ |
+| Fastest frame | 0.00s |
 | Slowest frame | 3.76s |
 | Total render time | 23.9s |
 | Full renders | 6 |
-| Skipped frames | 5 ⚡ (45%) |
+| Skipped frames | 5 (45%) |
 
 **Key observations:**
 - First test on a real production scene — two characters, DOF, full Lego environment
@@ -314,11 +314,11 @@ All tests conducted on real hardware by the project creator.
 | Metric | Value |
 |---|---|
 | Average frame time | 1.77s |
-| Fastest frame | 0.00s ⚡ |
+| Fastest frame | 0.00s |
 | Slowest frame | 3.67s |
 | Total render time | 297.7s |
 | Full renders | 74 |
-| Skipped frames | 75 ⚡ (50%) |
+| Skipped frames | 75 (50%) |
 
 **Key observations:**
 - First test with MeccaFace expression rig — face swaps and expression changes detected correctly
@@ -347,7 +347,7 @@ All tests conducted on real hardware by the project creator.
 
 **Hardware: NVIDIA GTX 970 — Blender 5.0 EEVEE — 1080p — 64 samples**
 
-**Real world result: 253 frame dialogue scene with MeccaFace expression rig rendered in ~5 minutes instead of ~15 minutes on a GTX 970.**
+**Real world result: 253 frame dialogue scene with MeccaFace expression rig rendered in ~8-9 minutes instead of ~15 minutes on a GTX 970.**
 
 ---
 
