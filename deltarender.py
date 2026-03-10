@@ -1,7 +1,7 @@
 bl_info = {
     "name": "DeltaRender",
     "author": "DeltaRender Project",
-    "version": (0, 7, 0),
+    "version": (0, 8, 0),
     "blender": (5, 0, 0),
     "location": "Properties > Render > DeltaRender",
     "description": "Smarter rendering through intelligent scene caching",
@@ -23,6 +23,8 @@ _state = {
     "dynamic_names": [],
     "static_matrices": {},
     "last_scene_snapshot": {},
+    "last_fcurve_snapshot": {},
+    "fcurve_table": {},
     "last_rendered_frame": -1,
     "last_output_path": "",
     "frame_log": [],
@@ -52,12 +54,14 @@ def has_animation_blender5(anim_data):
                 return True
     if anim_data.drivers:
         return True
-    if anim_data.action and anim_data.action_slot:
+    if anim_data.action:
         try:
-            for channelbag in anim_data.action.channelbags:
-                if channelbag.slot_handle == anim_data.action_slot.handle:
-                    if len(channelbag.fcurves) > 0:
-                        return True
+            # Blender 5.0 layered action API: action.layers -> strips -> channelbags
+            for layer in anim_data.action.layers:
+                for strip in layer.strips:
+                    for channelbag in strip.channelbags:
+                        if len(channelbag.fcurves) > 0:
+                            return True
         except Exception:
             pass
     return False
@@ -114,17 +118,16 @@ def build_keyframed_bones_cache(scene):
             continue
         keyframed = set()
         anim_data = obj.animation_data
-        if anim_data and anim_data.action and anim_data.action_slot:
+        if anim_data and anim_data.action:
             try:
-                for channelbag in anim_data.action.channelbags:
-                    if channelbag.slot_handle == anim_data.action_slot.handle:
-                        for fc in channelbag.fcurves:
-                            # data_path like 'pose.bones["Bone"].location'
-                            if fc.data_path.startswith('pose.bones['):
-                                # Extract bone name from data path
-                                start = fc.data_path.index('"') + 1
-                                end = fc.data_path.index('"', start)
-                                keyframed.add(fc.data_path[start:end])
+                for layer in anim_data.action.layers:
+                    for strip in layer.strips:
+                        for channelbag in strip.channelbags:
+                            for fc in channelbag.fcurves:
+                                if fc.data_path.startswith('pose.bones['):
+                                    start = fc.data_path.index('"') + 1
+                                    end = fc.data_path.index('"', start)
+                                    keyframed.add(fc.data_path[start:end])
             except Exception:
                 pass
         # If we found keyframed bones use them, otherwise fall back to all bones
@@ -138,9 +141,67 @@ def build_keyframed_bones_cache(scene):
     _state["keyframed_bones"] = cache
 
 
+def build_fcurve_table(scene, frame_start, frame_end):
+    """
+    Pre-evaluate ALL fcurves for ALL dynamic objects across ALL frames
+    at render start. Stores results in a lookup table so the render loop
+    never calls fc.evaluate() — just does dict lookups.
+    
+    Structure: {frame: {obj_name: {key: value}}}
+    """
+    table = {}
+    dynamic_names = _state["dynamic_names"]
+
+    for frame in range(frame_start, frame_end + 1):
+        frame_data = {}
+        for obj_name in dynamic_names:
+            obj = scene.objects.get(obj_name)
+            if not obj or not obj.animation_data or not obj.animation_data.action:
+                continue
+            action = obj.animation_data.action
+            values = {}
+            try:
+                for layer in action.layers:
+                    for strip in layer.strips:
+                        for channelbag in strip.channelbags:
+                            for fc in channelbag.fcurves:
+                                key = f"{fc.data_path}[{fc.array_index}]"
+                                values[key] = fc.evaluate(frame)
+            except Exception:
+                pass
+            if values:
+                frame_data[obj_name] = values
+        table[frame] = frame_data
+
+    print(f"  DeltaRender: ✓ FCurve table built — {len(table)} frames × {len(dynamic_names)} objects")
+    return table
+
+
+def compute_fcurve_delta(snap_a, snap_b):
+    """
+    Compare two fcurve snapshots.
+    Returns 999.0 if anything changed, 0.0 if identical.
+    """
+    if not snap_a or not snap_b:
+        return 999.0
+
+    for obj_name, vals_b in snap_b.items():
+        vals_a = snap_a.get(obj_name)
+        if vals_a is None:
+            return 999.0
+        for key, val_b in vals_b.items():
+            val_a = vals_a.get(key)
+            if val_a is None:
+                return 999.0
+            if abs(val_b - val_a) > 1e-6:
+                return 999.0
+
+    return 0.0
+
+
 def print_scan_results(static_objects, dynamic_objects, elapsed=None):
     print("\n" + "="*50)
-    print("  DELTARENDER v0.7 — Scene Scan Results")
+    print("  DELTARENDER v0.8 — Scene Scan Results")
     print("="*50)
     print(f"\n  Static objects ({len(static_objects)}) — will be cached:")
     for name in static_objects:
@@ -220,6 +281,31 @@ def snapshot_scene(scene):
         objects[obj_name] = obj.matrix_world.copy()
     snapshot["objects"] = objects
 
+    # ── MeccaFace — snapshot shader-driven face properties ──
+    # MeccaFace drives expressions via scene color properties on material nodes.
+    # None of these are bone-based so we must snapshot them separately.
+    mecaface_props = [
+        "eyes_float", "pupil_float", "test_float",
+        "omouth_float", "inmouth_float", "tong_float",
+        "teeth_float", "lips_float",
+    ]
+    meca = {}
+    for prop in mecaface_props:
+        val = getattr(scene, prop, None)
+        if val is not None:
+            try:
+                meca[prop] = tuple(val)
+            except Exception:
+                meca[prop] = val
+    if meca:
+        snapshot["mecaface"] = meca
+
+    # ── Object visibility — catches MeccaFace hide_render keyframes ──
+    vis = {}
+    for obj in scene.objects:
+        vis[obj.name] = obj.hide_render
+    snapshot["visibility"] = vis
+
     return snapshot
 
 
@@ -283,6 +369,19 @@ def compute_max_delta(snap_a, snap_b):
         diff = abs((mat_b - mat_a).median_scale)
         if diff > max_delta:
             max_delta = diff
+
+    # ── MeccaFace delta — any face property change forces full render ──
+    meca_a = snap_a.get("mecaface", {})
+    meca_b = snap_b.get("mecaface", {})
+    if meca_a or meca_b:
+        if meca_a != meca_b:
+            return 999.0
+
+    # ── Visibility delta — catches hide_render keyframes (MeccaFace face swaps) ──
+    vis_a = snap_a.get("visibility", {})
+    vis_b = snap_b.get("visibility", {})
+    if vis_a != vis_b:
+        return 999.0
 
     return max_delta
 
@@ -440,6 +539,12 @@ def on_render_post(scene, depsgraph):
         build_static_cache(scene)
 
     # Snapshot pose for next frame delta comparison
+    # Re-set frame to ensure depsgraph is current before snapshotting
+    try:
+        scene.frame_set(current_frame)
+        bpy.context.view_layer.update()
+    except Exception:
+        pass
     _state["last_scene_snapshot"] = snapshot_scene(scene)
     _state["last_rendered_frame"] = current_frame
 
@@ -509,6 +614,7 @@ class DELTARENDER_OT_render_animation(bpy.types.Operator):
         _state["is_rendering"] = True
         _state["cache_built"] = False
         _state["last_scene_snapshot"] = {}
+        _state["last_fcurve_snapshot"] = {}
         _state["last_rendered_frame"] = -1
         _state["last_output_path"] = ""
         _state["frame_log"] = []
@@ -534,6 +640,15 @@ class DELTARENDER_OT_render_animation(bpy.types.Operator):
             scene.frame_step
         ))
         self._scene = scene
+
+        # Pre-build fcurve lookup table for all frames
+        # This avoids calling fc.evaluate() during the modal render loop
+        # which can cause crashes in Blender's C++ evaluator
+        _state["fcurve_table"] = build_fcurve_table(
+            scene,
+            scene.frame_start,
+            scene.frame_end
+        )
 
         total = len(static_objects) + len(dynamic_objects)
         savings = round((len(static_objects) / total) * 100) if total > 0 else 0
@@ -578,21 +693,31 @@ class DELTARENDER_OT_render_animation(bpy.types.Operator):
         # ── DECISION LOGIC ──
         if self._frame_index == 0:
             # Always fully render first frame
+            _state["last_fcurve_snapshot"] = _state["fcurve_table"].get(frame, {})
             tier = "FULL"
         else:
+            # Pure dict lookup — no C++ calls during render loop
+            curr_fcurve = _state["fcurve_table"].get(frame, {})
+            fcurve_delta = compute_fcurve_delta(
+                _state["last_fcurve_snapshot"],
+                curr_fcurve
+            )
+
+            # Also check camera via scene snapshot
             current_snapshot = snapshot_scene(scene)
-            max_delta = compute_max_delta(
+            scene_delta = compute_max_delta(
                 _state["last_scene_snapshot"],
                 current_snapshot
             )
+
+            max_delta = max(fcurve_delta, scene_delta)
             skip_threshold = scene.dr_skip_threshold
 
             if max_delta <= skip_threshold:
                 tier = "SKIP"
             else:
                 tier = "FULL"
-                if max_delta == 999.0:
-                    print(f"  DeltaRender: Frame {frame} — scene change detected [FULL]")
+                _state["last_fcurve_snapshot"] = curr_fcurve
 
         if tier == "SKIP":
             # True skip — copy previous file, never touch GPU
@@ -622,12 +747,11 @@ class DELTARENDER_OT_render_animation(bpy.types.Operator):
                 tier = "FULL"  # fallback to full render
 
             if tier == "SKIP":
-                # Update last output path to this frame
-                # so the next skip copies from here
+                # Update last output path and fcurve snapshot for next frame
                 _state["last_output_path"] = curr_path
+                _state["last_fcurve_snapshot"] = curr_fcurve
                 self._frame_index += 1
                 return {"RUNNING_MODAL"}
-
         # FULL render — call Blender's render for this single frame
         _state["frame_start_time"] = time.time()
         print(f"  DeltaRender: Frame {frame} — Rendering [FULL]...")
