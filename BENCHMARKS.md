@@ -299,6 +299,39 @@ All tests conducted on real hardware by the project creator.
 
 ---
 
+### Version 0.8 — FCurve Delta Detection + MeccaFace Support
+
+| Setting | Value |
+|---|---|
+| DeltaRender Version | 0.8 |
+| Scene | **Different scene** — Notting Hill dialogue recreation, single Lego character with MeccaFace expression rig, close-up shot, depth of field, stepped interpolation |
+| Frames Rendered | 253 |
+| Render Device | GPU (EEVEE) |
+| Total Render Time | ~8-9 minutes |
+
+**Results:**
+
+| Metric | Value |
+|---|---|
+| Average frame time | 1.77s |
+| Fastest frame | 0.00s ⚡ |
+| Slowest frame | 3.67s |
+| Total render time | 297.7s |
+| Full renders | 74 |
+| Skipped frames | 75 ⚡ (50%) |
+
+**Key observations:**
+- First test with MeccaFace expression rig — face swaps and expression changes detected correctly
+- Bone matrix approach abandoned — Blender 5.0 depsgraph does not evaluate complex rigs via Python `frame_set()` in modal context
+- Replaced with fcurve pre-evaluation table — all fcurve values computed once at render start, zero C++ calls during render loop
+- This eliminates the memory crash that occurred when calling `fc.evaluate()` repeatedly during modal rendering
+- 50% skip rate on a dialogue scene with stepped interpolation — held poses between expression changes skipped correctly
+- 1290 static objects (complex Lego environment) cached in RAM — 19 dynamic objects delta checked
+- Scene complexity significantly higher than previous tests — skip rate held at 50%
+- **FCurve approach is more robust than bone matrix approach for complex rigs with IK/constraints**
+
+---
+
 ## Complete Progression Summary
 
 | Version | Feature | Total Time (22fr) | vs Baseline |
@@ -309,11 +342,12 @@ All tests conducted on real hardware by the project creator.
 | v0.4 | Three-tier frame delta | 82.8s | -34.1% |
 | v0.5 | True frame skipping | 43.0s | -65.8% |
 | v0.6 | EEVEE shadow optimization | 42.9s | -65.8% |
-| **v0.7** | **Full scene delta detection** | **—** | **~65%+ confirmed on production scenes** |
+| v0.7 | Full scene delta detection | — | ~65%+ confirmed on production scenes |
+| **v0.8** | **FCurve delta + MeccaFace support** | **297.7s (253fr)** | **50% skip rate on complex dialogue scene** |
 
 **Hardware: NVIDIA GTX 970 — Blender 5.0 EEVEE — 1080p — 64 samples**
 
-**Real world result: A scene that would take ~2 minutes rendered in 23.9 seconds on a GTX 970.**
+**Real world result: 253 frame dialogue scene with MeccaFace expression rig rendered in ~5 minutes instead of ~15 minutes on a GTX 970.**
 
 ---
 
@@ -325,4 +359,4 @@ All tests conducted on real hardware by the project creator.
 
 ---
 
-*Last updated: March 2026 — v0.7 results added. Production scene testing confirmed. Python optimization ceiling reached.*
+*Last updated: March 2026 — v0.8 results added. FCurve delta detection confirmed working on complex rigs. MeccaFace support added.*
